@@ -257,13 +257,12 @@ def export_rooms():
 def toggle_scheduler(action):
     status_to_set = 'paused' if action == 'pause' else 'running'
     try:
-        if action == 'pause' and scheduler.state == 1:
+        if action == 'pause':
             scheduler.pause()
-            execute_db("UPDATE config SET scheduler_status = ? WHERE id = 1", (status_to_set,))
-        elif action == 'resume' and scheduler.state == 2:
+        elif action == 'resume':
             scheduler.resume()
-            execute_db("UPDATE config SET scheduler_status = ? WHERE id = 1", (status_to_set,))
         
+        execute_db("UPDATE config SET scheduler_status = ? WHERE id = 1", (status_to_set,))
         return f"스케줄러가 {status_to_set} 상태가 되었습니다."
     except Exception as e:
         return f"오류 발생: {e}", 500
@@ -344,15 +343,17 @@ def register_selected():
 # --- 애플리케이션 실행 ---
 init_db()
 
+config = query_db("SELECT * FROM config WHERE id = 1", one=True)
+interval_min = config['interval_min'] if config else 30
+interval_max = config['interval_max'] if config else 40
+initial_status = config['scheduler_status'] if config else 'running'
+
+scheduler.add_job(lambda: asyncio.run(scheduled_send()), 'interval', minutes=random.randint(interval_min, interval_max), id='promo_job')
+scheduler.start()
+
+if initial_status == 'paused':
+    scheduler.pause()
+
 if __name__ == '__main__':
-    config = query_db("SELECT interval_min, interval_max FROM config WHERE id = 1", one=True)
-    interval_min = config['interval_min'] if config else 30
-    interval_max = config['interval_max'] if config else 40
-
-    scheduler.add_job(lambda: asyncio.run(scheduled_send()), 'interval', minutes=random.randint(interval_min, interval_max), id='promo_job')
-    scheduler.start()
-    
-    execute_db("UPDATE config SET scheduler_status = ? WHERE id = 1", ('running',))
-
     print("Userbot 데이터베이스와 스케줄러가 준비되었습니다.")
     app.run(host='0.0.0.0', port=8080)
