@@ -247,22 +247,19 @@ async def check_rooms():
 @app.route('/preview', methods=['POST'])
 async def preview_message():
     try:
-        preview_id = request.form.get('preview_id')
-        message_template = request.form.get('message')
+        preview_id, message_template = request.form.get('preview_id'), request.form.get('message')
         photo = request.files.get('photo')
         if not preview_id or not message_template: return jsonify({'message': 'ID와 메시지를 입력해주세요.'}), 400
 
         client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
         await client.connect()
         try:
-            final_message = process_spintax(message_template)
             photo_filename = None
             if photo and photo.filename:
                 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
                 photo_filename = "preview_" + photo.filename
                 photo.save(os.path.join(app.config['UPLOAD_FOLDER'], photo_filename))
-
-            await send_userbot_message(client, preview_id, final_message, photo_filename)
+            await send_userbot_message(client, preview_id, message_template, photo_filename)
             return jsonify({'message': f'✅ {preview_id}로 미리보기 발송 성공.'})
         finally:
             if client.is_connected():
@@ -300,7 +297,7 @@ async def register_all():
         count = 0
         async for dialog in client.iter_dialogs():
             if (dialog.is_group or dialog.is_channel) and str(dialog.id) not in registered_ids:
-                execute_db("INSERT OR IGNORE INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)", (str(dialog.id), dialog.name, '기본'))
+                execute_db("INSERT OR IGNORE INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)",(str(dialog.id), dialog.name, '기본'))
                 count += 1
         print(f"{count}개의 새로운 방을 등록했습니다.")
     except Exception as e:
@@ -309,6 +306,20 @@ async def register_all():
         if client.is_connected():
             await client.disconnect()
     return "<script>alert('미등록된 그룹/채널을 모두 등록했습니다!'); window.location.href='/dialogs';</script>"
+
+@app.route('/register_selected', methods=['POST'])
+def register_selected():
+    selected_rooms = request.form.getlist('selected_rooms')
+    count = 0
+    for room_data in selected_rooms:
+        chat_id, room_name = room_data.split('|', 1)
+        try:
+            execute_db("INSERT OR IGNORE INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)",(chat_id, room_name, '기본'))
+            count += 1
+        except Exception as e:
+            print(f"선택 등록 중 오류: {e}")
+    return f"<script>alert('{count}개의 방을 선택하여 등록했습니다!'); window.location.href='/dialogs';</script>"
+
 
 # --- 애플리케이션 실행 ---
 init_db()
