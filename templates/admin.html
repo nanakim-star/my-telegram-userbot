@@ -51,17 +51,19 @@
         <div class="activity-log"><h3>최근 활동 로그</h3><ul>{% for log in dashboard.recent_logs %}<li>{{ log.timestamp }} - {{ log.details }}</li>{% else %}<li>아직 활동 기록이 없습니다.</li>{% endfor %}</ul></div>
         <hr>
         <h2>⚙️ 기본 설정</h2>
-        <form id="config-form" method="post" enctype="multipart/form-data">
+        <form id="config-form" method="post">
             <h3>1. 홍보 문구</h3>
             <p class="spintax-info">스핀택스 사용 가능: {단어1|단어2} 형식으로 작성하면 발송 시마다 랜덤하게 선택됩니다.</p>
             <textarea name="message" placeholder="홍보할 메시지를 입력하세요.">{{ config.message }}</textarea>
-            <h3>2. 홍보용 사진 (선택 사항)</h3>
+
+            <h3>2. 홍보용 사진 (메시지 ID)</h3>
             <div class="photo-info">
-                1. '사진 저장소' 비공개 채널에 사진을 직접 올리세요.<br>
-                2. 올린 사진을 <code>@userinfobot</code> 같은 ID 확인 봇에 전달(forward)하여 'message_id'를 얻으세요.<br>
-                3. 얻은 숫자 ID를 아래 칸에 붙여넣으세요.
+                <strong>ID 얻는 법 (가장 간단한 방법):</strong><br>
+                1. '사진 저장소' 채널에 올린 사진을 <strong>마우스 오른쪽 클릭</strong> (모바일은 <strong>길게 누르기</strong>) 하세요.<br>
+                2. 메뉴에서 <strong>'메시지 링크 복사'</strong>를 선택합니다.<br>
+                3. 복사된 링크 (예: <code>https://t.me/c/123456/5</code>)에서 맨 마지막 숫자 <strong><code>5</code></strong>가 메시지 ID입니다.
             </div>
-            <input type="text" name="photo" placeholder="사진 메시지 ID를 입력하세요." value="{{ config.photo }}">
+            <input type="text" name="photo" placeholder="위 방법으로 얻은 숫자 ID를 입력하세요." value="{{ config.photo }}">
             <h3>3. 미리보기 테스트</h3>
             <label for="preview_id">테스트 메시지를 받을 텔레그램 @사용자명</label>
             <input type="text" id="preview_id" name="preview_id" placeholder="@username 또는 숫자 ID 입력" value="{{ config.preview_id }}">
