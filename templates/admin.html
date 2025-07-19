@@ -10,7 +10,7 @@
         hr { border: 0; border-top: 1px solid #eee; margin: 2em 0; }
         form { margin-bottom: 1.5em; }
         label { font-weight: 500; display: block; margin-bottom: 5px; }
-        textarea, input[type="text"], input[type="number"], input[type="file"] { width: 98%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 1em; margin-bottom: 1em; }
+        textarea, input[type="text"], input[type="number"] { width: 98%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 1em; margin-bottom: 1em; }
         textarea { height: 120px; resize: vertical; }
         button, .button-link { padding: 10px 15px; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; font-weight: 500; text-decoration: none; color: white; display: inline-block; margin-right: 10px; margin-bottom: 10px; }
         .btn-primary { background-color: #007bff; }
@@ -18,8 +18,8 @@
         .btn-danger { background-color: #dc3545; }
         .btn-success { background-color: #28a745; }
         .btn-info { background-color: #17a2b8; }
-        .info, .message { background-color: #e7f3fe; border-left: 6px solid #2196F3; padding: 1em; margin-top: 1em; }
-        .spintax-info, .photo-info { font-size: 0.9em; color: #555; margin-bottom: 5px; }
+        .message { background-color: #e7f3fe; border-left: 6px solid #2196F3; padding: 1em; margin-top: 1em; }
+        .spintax-info, .photo-info { font-size: 0.9em; color: #555; margin-bottom: 5px; line-height: 1.5; }
         .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1em; margin-bottom: 2em; }
         .dash-card { background: #f8f9fa; padding: 1.5em; border-radius: 5px; text-align: center; border: 1px solid #eee; }
         .dash-card h4 { margin: 0 0 10px 0; color: #555; font-weight: 500; }
@@ -51,17 +51,24 @@
         <div class="activity-log"><h3>최근 활동 로그</h3><ul>{% for log in dashboard.recent_logs %}<li>{{ log.timestamp }} - {{ log.details }}</li>{% else %}<li>아직 활동 기록이 없습니다.</li>{% endfor %}</ul></div>
         <hr>
         <h2>⚙️ 기본 설정</h2>
-        <form id="config-form" method="post" enctype="multipart/form-data">
+        <form id="config-form" method="post">
             <h3>1. 홍보 문구</h3>
             <p class="spintax-info">스핀택스 사용 가능: {단어1|단어2} 형식으로 작성하면 발송 시마다 랜덤하게 선택됩니다.</p>
             <textarea name="message" placeholder="홍보할 메시지를 입력하세요.">{{ config.message }}</textarea>
-            <h3>2. 홍보용 사진 (선택 사항)</h3>
-            <input type="file" name="photo">
-            {% if config.photo %}<p class="photo-info">현재 등록된 사진: <strong>{{ config.photo }}</strong></p>{% endif %}
+
+            <h3>2. 홍보용 사진 (메시지 ID)</h3>
+            <div class="photo-info">
+                1. '사진 저장소' 비공개 채널에 사진을 직접 올리세요.<br>
+                2. 올린 사진을 <code>@userinfobot</code> 같은 ID 확인 봇에 전달(forward)하여 'message_id'를 얻으세요.<br>
+                3. 얻은 숫자 ID를 아래 칸에 붙여넣으세요.
+            </div>
+            <input type="text" name="photo" placeholder="사진 메시지 ID를 입력하세요." value="{{ config.photo }}">
+            
             <h3>3. 미리보기 테스트</h3>
             <label for="preview_id">테스트 메시지를 받을 텔레그램 @사용자명</label>
             <input type="text" id="preview_id" name="preview_id" placeholder="@username 또는 숫자 ID 입력" value="{{ config.preview_id }}">
             <button type="button" class="btn-secondary" onclick="sendPreview(this)">미리보기 발송</button>
+
             <h3>4. 랜덤 발송 간격 (분)</h3>
             <div style="display: flex; gap: 1em;"><div style="flex: 1;"><label for="interval_min">최소 간격</label><input type="number" id="interval_min" name="interval_min" value="{{ config.interval_min }}"></div><div style="flex: 1;"><label for="interval_max">최대 간격</label><input type="number" id="interval_max" name="interval_max" value="{{ config.interval_max }}"></div></div>
             <button type="submit" class="btn-primary" style="width: 100%; margin-top: 2em;">기본 설정 저장하기</button>
@@ -71,7 +78,7 @@
         <h2>🗂️ 홍보방 관리</h2>
         <form id="add-room-form"><h3>신규 방 추가</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1em;"><input type="text" name="chat_id" placeholder="채팅방 ID (필수)" required><input type="text" name="room_name" placeholder="채팅방 이름 (별칭)"><input type="text" name="room_group" placeholder="그룹명" value="기본"></div><button type="submit" class="btn-success">새로운 방 추가</button></form>
         <h3>일괄 관리</h3>
-        <form id="import-form" action="/import_rooms" method="post" enctype="multipart/form-data" style="display:inline-block;"><input type="file" name="file" required><button type="submit" class="btn-info">CSV 가져오기</button></form>
+        <form id="import-form" action="/import_rooms" method="post" enctype="multipart/form-data"><input type="file" name="file" required><button type="submit" class="btn-info">CSV 가져오기</button></form>
         <a href="/export_rooms" class="button-link btn-secondary">CSV 내보내기</a>
         <button class="btn-info" onclick="checkRooms(this)">모든 방 상태 확인</button>
         <h3>등록된 방 목록</h3>
@@ -84,34 +91,7 @@
         function hideLoading(button) { if(button.dataset.originalText) { button.textContent = button.dataset.originalText; } button.disabled = false; }
         function toggleScheduler(action) { const button = event.target; showLoading(button); fetch(`/toggle_scheduler/${action}`, { method: 'POST' }).finally(() => window.location.reload()); }
         function sendPreview(button) { const form = document.getElementById('config-form'); const formData = new FormData(form); showLoading(button); fetch('/preview', { method: 'POST', body: formData }).then(response => response.json()).then(data => alert(data.message)).catch(error => alert('미리보기 전송 중 오류 발생: ' + error)).finally(() => hideLoading(button)); }
-        
-        // --- 여기가 수정된 부분 ---
-        document.getElementById('add-room-form').addEventListener('submit', function(e) {
-            e.preventDefault(); // 페이지가 넘어가지 않도록 막음
-            const button = this.querySelector('button');
-            showLoading(button);
-            fetch('/add_room', { 
-                method: 'POST', 
-                body: new FormData(this) 
-            })
-            .then(response => {
-                // 서버 응답이 성공(ok)이 아니면, 에러로 처리
-                if (!response.ok) {
-                    return response.text().then(text => { throw new Error(text) });
-                }
-                return response.text();
-            })
-            .then(message => {
-                alert(message); // 성공 메시지를 팝업으로 표시
-                window.location.reload(); // 성공 시에만 페이지 새로고침
-            })
-            .catch(error => {
-                alert('추가 실패: ' + error.message); // 실패 메시지(서버가 보낸)를 팝업으로 표시
-                hideLoading(button); // 실패 시 '처리 중' 상태 해제
-            });
-        });
-        // -----------------------
-
+        document.getElementById('add-room-form').addEventListener('submit', function(e) { e.preventDefault(); const button = this.querySelector('button'); showLoading(button); fetch('/add_room', { method: 'POST', body: new FormData(this) }).then(response => { if (!response.ok) { return response.text().then(text => { throw new Error(text) }); } return response.text(); }).then(message => { alert(message); window.location.reload(); }).catch(error => { alert('추가 실패: ' + error.message); hideLoading(button); }); });
         document.getElementById('import-form').addEventListener('submit', function(e) { e.preventDefault(); const button = this.querySelector('button'); showLoading(button); const formData = new FormData(this); fetch('/import_rooms', { method: 'POST', body: formData }).then(response => response.text()).then(message => { alert(message); window.location.reload(); }).catch(error => { alert('가져오기 중 오류가 발생했습니다: ' + error); hideLoading(button); }); });
         function deleteRoom(roomId) { if (confirm('정말로 이 방을 삭제하시겠습니까?')) { const button = event.target; showLoading(button); fetch(`/delete_room/${roomId}`, { method: 'POST' }).finally(() => window.location.reload()); } }
         function checkRooms(button) { showLoading(button, '상태 확인 중...'); fetch('/check_rooms', { method: 'POST' }).then(response => response.text()).then(message => { alert(message); window.location.reload(); }).catch(error => alert('상태 확인 중 오류 발생: ' + error)).finally(() => hideLoading(button)); }
