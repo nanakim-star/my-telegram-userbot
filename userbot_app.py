@@ -144,7 +144,7 @@ scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
 
 # --- 관리자 페이지 및 API 라우트 ---
 @app.route('/', methods=['GET', 'POST'])
-async def admin_page():
+def admin_page(): # async 제거 (사진 업로드 로직 변경)
     page_message = None
     if request.method == 'POST':
         message, preview_id = request.form.get('message'), request.form.get('preview_id')
@@ -193,14 +193,11 @@ def add_room():
         return "이미 존재하는 Chat ID 입니다.", 400
     return "성공적으로 추가되었습니다."
 
-# --- 여기가 수정/추가된 부분 ---
 @app.route('/delete_selected_rooms', methods=['POST'])
 def delete_selected_rooms():
     selected_ids = request.form.getlist('selected_ids')
     if not selected_ids:
         return "삭제할 항목을 선택하세요.", 400
-    
-    # id 리스트를 튜플로 변환하여 SQL 쿼리에 안전하게 사용
     placeholders = ','.join('?' for _ in selected_ids)
     execute_db(f"DELETE FROM promo_rooms WHERE id IN ({placeholders})", selected_ids)
     return "선택된 방이 삭제되었습니다."
@@ -209,7 +206,6 @@ def delete_selected_rooms():
 def delete_all_rooms():
     execute_db("DELETE FROM promo_rooms")
     return "모든 방이 삭제되었습니다."
-# -----------------------
 
 @app.route('/import_rooms', methods=['POST'])
 def import_rooms():
@@ -245,7 +241,6 @@ def toggle_scheduler(action):
             scheduler.pause()
         elif action == 'resume':
             scheduler.resume()
-        
         execute_db("UPDATE config SET scheduler_status = ? WHERE id = 1", (status_to_set,))
         return f"스케줄러가 {status_to_set} 상태가 되었습니다."
     except Exception as e:
