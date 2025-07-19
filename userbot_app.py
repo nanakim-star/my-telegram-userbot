@@ -13,20 +13,18 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors.rpcerrorlist import FloodWaitError, UserIsBlockedError, PeerFloodError
-from telethon.tl.functions.channels import GetParticipantRequest
-from telethon.tl.types import ChannelParticipantAdmin, ChannelParticipantCreator
 
 # --- 기본 설정 ---
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-SESSION_STRING = os.getenv("SESSION_STRING") # Render에 등록할 비밀번호 문자열
+SESSION_STRING = os.getenv("SESSION_STRING")
 DATABASE_URL = os.getenv('DATABASE_URL')
 UPLOAD_FOLDER = os.getenv('RENDER_DISK_PATH', 'static/uploads')
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# --- 데이터베이스 연결 함수 (PostgreSQL & SQLite 호환) ---
+# --- 데이터베이스 연결 함수 ---
 def get_db_connection():
     if DATABASE_URL:
         url = urlparse(DATABASE_URL)
@@ -68,43 +66,20 @@ def process_spintax(text):
 
 # --- 데이터베이스 초기화 ---
 def init_db():
-    # Render에서는 PostgreSQL 문법, 로컬에서는 SQLite 문법 사용
     is_postgres = bool(DATABASE_URL)
-    
-    # 테이블 생성 SQL
-    config_table_sql = '''
-        CREATE TABLE IF NOT EXISTS config (
-            id INTEGER PRIMARY KEY, message TEXT, photo TEXT, 
-            interval_min INTEGER, interval_max INTEGER, scheduler_status TEXT,
-            preview_id TEXT
-        )'''
-    promo_rooms_table_sql = f'''
-        CREATE TABLE IF NOT EXISTS promo_rooms (
-            id {'SERIAL' if is_postgres else 'INTEGER'} PRIMARY KEY {'AUTOINCREMENT' if not is_postgres else ''},
-            chat_id TEXT NOT NULL UNIQUE,
-            room_name TEXT,
-            room_group TEXT DEFAULT '기본',
-            is_active INTEGER DEFAULT 1,
-            last_status TEXT DEFAULT '확인 안됨'
-        )'''
-    activity_log_table_sql = f'''
-        CREATE TABLE IF NOT EXISTS activity_log (
-            id {'SERIAL' if is_postgres else 'INTEGER'} PRIMARY KEY {'AUTOINCREMENT' if not is_postgres else ''},
-            timestamp {'TIMESTAMPTZ' if is_postgres else 'DATETIME'} DEFAULT CURRENT_TIMESTAMP,
-            details TEXT
-        )'''
-
+    config_table_sql = '''CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, message TEXT, photo TEXT, interval_min INTEGER, interval_max INTEGER, scheduler_status TEXT, preview_id TEXT)'''
+    promo_rooms_table_sql = f'''CREATE TABLE IF NOT EXISTS promo_rooms (id {'SERIAL' if is_postgres else 'INTEGER'} PRIMARY KEY {'AUTOINCREMENT' if not is_postgres else ''}, chat_id TEXT NOT NULL UNIQUE, room_name TEXT, room_group TEXT DEFAULT '기본', is_active INTEGER DEFAULT 1, last_status TEXT DEFAULT '확인 안됨')'''
+    activity_log_table_sql = f'''CREATE TABLE IF NOT EXISTS activity_log (id {'SERIAL' if is_postgres else 'INTEGER'} PRIMARY KEY {'AUTOINCREMENT' if not is_postgres else ''}, timestamp {'TIMESTAMPTZ' if is_postgres else 'DATETIME'} DEFAULT CURRENT_TIMESTAMP, details TEXT)'''
     with get_db_connection() as conn:
-        cursor = conn.cursor() # <--- 이 줄이 올바른 위치에 있어야 합니다.
+        cursor = conn.cursor()
         cursor.execute(config_table_sql)
         cursor.execute(promo_rooms_table_sql)
         cursor.execute(activity_log_table_sql)
-        
         cursor.execute("SELECT * FROM config WHERE id = 1")
         if not cursor.fetchone():
-            # PostgreSQL은 %s, SQLite는 ?를 사용
-            placeholder_sql = "INSERT INTO config (id, message, photo, interval_min, interval_max, scheduler_status, preview_id) VALUES (%s, %s, %s, %s, %s, %s, %s)" if is_postgres else "INSERT INTO config (id, message, photo, interval_min, interval_max, scheduler_status, preview_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
-            cursor.execute(placeholder_sql, (1, '', '', 30, 40, 'running', ''))
+            placeholder = '%s' if is_postgres else '?'
+            insert_sql = f"INSERT INTO config (id, message, photo, interval_min, interval_max, scheduler_status, preview_id) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})"
+            cursor.execute(insert_sql, (1, '', '', 30, 40, 'running', ''))
         conn.commit()
 
 # --- Telethon(Userbot) 핵심 로직 ---
@@ -281,17 +256,59 @@ async def preview_message():
         await client.connect()
         try:
             final_message = process_spintax(message_template)
+            photo_filename = None
             if photo and photo.filename:
-                photo.seek(0)
-                await client.send_file(preview_id, file=photo, caption=final_message)
-            else:
-                await client.send_message(preview_id, final_message)
+                os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+                photo_filename = "preview_" + photo.filename
+                photo.save(os.path.join(app.config['UPLOAD_FOLDER'], photo_filename))
+
+            await send_userbot_message(client, preview_id, final_message, photo_filename)
             return jsonify({'message': f'✅ {preview_id}로 미리보기 발송 성공.'})
         finally:
             if client.is_connected():
                 await client.disconnect()
     except Exception as e:
         return jsonify({'message': f'❌ 미리보기 전송 실패: {e}'}), 500
+
+@app.route('/dialogs')
+async def dialogs_page():
+    client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+    dialog_list = []
+    try:
+        await client.connect()
+        registered_rooms = query_db("SELECT chat_id FROM promo_rooms")
+        registered_ids = {str(room['chat_id']) for room in registered_rooms}
+        async for dialog in client.iter_dialogs():
+            dialog_type = "유저"
+            if dialog.is_group: dialog_type = "그룹"
+            if dialog.is_channel: dialog_type = "채널"
+            dialog_list.append({'name': dialog.name, 'id': dialog.id, 'type': dialog_type, 'is_registered': str(dialog.id) in registered_ids})
+    except Exception as e:
+        print(f"대화방 목록 로딩 오류: {e}")
+    finally:
+        if client.is_connected():
+            await client.disconnect()
+    return render_template('dialogs.html', dialogs=dialog_list)
+
+@app.route('/register_all', methods=['POST'])
+async def register_all():
+    client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+    try:
+        await client.connect()
+        registered_rooms = query_db("SELECT chat_id FROM promo_rooms")
+        registered_ids = {str(room['chat_id']) for room in registered_rooms}
+        count = 0
+        async for dialog in client.iter_dialogs():
+            if (dialog.is_group or dialog.is_channel) and str(dialog.id) not in registered_ids:
+                execute_db("INSERT OR IGNORE INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)", (str(dialog.id), dialog.name, '기본'))
+                count += 1
+        print(f"{count}개의 새로운 방을 등록했습니다.")
+    except Exception as e:
+        print(f"전체 등록 중 오류: {e}")
+    finally:
+        if client.is_connected():
+            await client.disconnect()
+    return "<script>alert('미등록된 그룹/채널을 모두 등록했습니다!'); window.location.href='/dialogs';</script>"
 
 # --- 애플리케이션 실행 ---
 init_db()
