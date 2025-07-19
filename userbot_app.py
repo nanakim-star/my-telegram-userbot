@@ -178,7 +178,7 @@ def add_room():
     chat_id, room_name, room_group = request.form.get('chat_id'), request.form.get('room_name'), request.form.get('room_group')
     if not chat_id: return "Chat ID는 필수입니다.", 400
     try:
-        execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)", (chat_id, room_name, room_group))
+        execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?) ON CONFLICT (chat_id) DO NOTHING", (chat_id, room_name, room_group))
     except (psycopg2.IntegrityError, sqlite3.IntegrityError):
         return "이미 존재하는 Chat ID 입니다.", 400
     return "성공적으로 추가되었습니다."
@@ -198,7 +198,7 @@ def import_rooms():
     for row in reader:
         if len(row) >= 3:
             try:
-                execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)", (row[0], row[1], row[2]))
+                execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?) ON CONFLICT (chat_id) DO NOTHING", (row[0], row[1], row[2]))
             except (psycopg2.IntegrityError, sqlite3.IntegrityError):
                 continue
     return "가져오기 완료!"
@@ -297,7 +297,7 @@ async def register_all():
         count = 0
         async for dialog in client.iter_dialogs():
             if (dialog.is_group or dialog.is_channel) and str(dialog.id) not in registered_ids:
-                execute_db("INSERT OR IGNORE INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)",(str(dialog.id), dialog.name, '기본'))
+                execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?) ON CONFLICT (chat_id) DO NOTHING",(str(dialog.id), dialog.name, '기본'))
                 count += 1
         print(f"{count}개의 새로운 방을 등록했습니다.")
     except Exception as e:
@@ -314,12 +314,11 @@ def register_selected():
     for room_data in selected_rooms:
         chat_id, room_name = room_data.split('|', 1)
         try:
-            execute_db("INSERT OR IGNORE INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)",(chat_id, room_name, '기본'))
+            execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?) ON CONFLICT (chat_id) DO NOTHING",(chat_id, room_name, '기본'))
             count += 1
         except Exception as e:
             print(f"선택 등록 중 오류: {e}")
     return f"<script>alert('{count}개의 방을 선택하여 등록했습니다!'); window.location.href='/dialogs';</script>"
-
 
 # --- 애플리케이션 실행 ---
 init_db()
