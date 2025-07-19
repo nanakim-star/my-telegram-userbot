@@ -10,6 +10,7 @@
         button, .button-link { padding: 10px 15px; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; font-weight: 500; text-decoration: none; color: white; display: inline-block; margin-right: 10px; margin-bottom: 10px; }
         .btn-success { background-color: #28a745; }
         .btn-secondary { background-color: #6c757d; }
+        .btn-info { background-color: #17a2b8; }
         table { width: 100%; border-collapse: collapse; margin-top: 1.5em; }
         th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
         th { background-color: #f8f9fa; }
@@ -23,40 +24,59 @@
         <h1>🗂️ 내 모든 대화방 관리</h1>
         <p>Userbot 계정이 참여하고 있는 모든 그룹, 채널, 1:1 대화 목록입니다.</p>
         
-        <form action="/register_all" method="post">
-            <button type="submit" class="btn-success">미등록된 모든 그룹/채널을 홍보방 목록에 추가하기</button>
+        <form id="register-form" action="/register_selected" method="post">
+            <button type="submit" class="btn-info">선택된 그룹/채널 추가하기</button>
+            <button type="button" class="btn-success" onclick="document.getElementById('register-all-form').submit();">미등록 전체 추가하기</button>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" onclick="toggleAll(this)"></th>
+                        <th>이름</th>
+                        <th>ID</th>
+                        <th>타입</th>
+                        <th>등록 상태</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for dialog in dialogs %}
+                    <tr>
+                        <td>
+                            {% if not dialog.is_registered and (dialog.type == '그룹' or dialog.type == '채널') %}
+                                <input type="checkbox" name="selected_rooms" value="{{ dialog.id }}|{{ dialog.name }}">
+                            {% endif %}
+                        </td>
+                        <td>{{ dialog.name }}</td>
+                        <td><code>{{ dialog.id }}</code></td>
+                        <td>{{ dialog.type }}</td>
+                        <td>
+                            {% if dialog.is_registered %}
+                                <span class="status-registered">등록됨</span>
+                            {% else %}
+                                <span class="status-unregistered">미등록</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" style="text-align: center;">대화방을 불러올 수 없습니다.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </form>
 
-        <table>
-            <thead>
-                <tr>
-                    <th>이름</th>
-                    <th>ID</th>
-                    <th>타입</th>
-                    <th>등록 상태</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for dialog in dialogs %}
-                <tr>
-                    <td>{{ dialog.name }}</td>
-                    <td><code>{{ dialog.id }}</code></td>
-                    <td>{{ dialog.type }}</td>
-                    <td>
-                        {% if dialog.is_registered %}
-                            <span class="status-registered">등록됨</span>
-                        {% else %}
-                            <span class="status-unregistered">미등록</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td colspan="4" style="text-align: center;">대화방을 불러올 수 없습니다.</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <form id="register-all-form" action="/register_all" method="post" style="display: none;"></form>
     </div>
+
+    <script>
+        // 전체 선택/해제 기능
+        function toggleAll(source) {
+            checkboxes = document.getElementsByName('selected_rooms');
+            for(var i=0, n=checkboxes.length; i<n; i++) {
+                checkboxes[i].checked = source.checked;
+            }
+        }
+    </script>
 </body>
 </html>
