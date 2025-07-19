@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>로그인</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f9; margin: 0; }
+        .login-container { background: white; padding: 2.5em; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 320px; }
+        h2 { text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 0; }
+        input[type="text"], input[type="password"] { width: 92%; padding: 12px; margin-bottom: 1em; border: 1px solid #ddd; border-radius: 4px; font-size: 1em; }
+        button { width: 100%; padding: 12px; border: none; background-color: #007bff; color: white; border-radius: 4px; cursor: pointer; font-size: 1.1em; }
+        .error { color: #dc3545; text-align: center; margin-top: 1em; font-weight: 500; }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h2>관리자 로그인</h2>
+        <form method="post">
+            <input type="text" name="username" placeholder="사용자 이름" required>
+            <input type="password" name="password" placeholder="비밀번호" required>
+            <button type="submit">로그인</button>
+        </form>
+        {% if error %}
+            <p class="error">{{ error }}</p>
+        {% endif %}
+    </div>
+</body>
+</html>
