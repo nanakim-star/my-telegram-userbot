@@ -1,0 +1,6 @@
+Telethon
+Flask[async]
+gunicorn
+APScheduler
+Pillow
+psycopg2-binary
