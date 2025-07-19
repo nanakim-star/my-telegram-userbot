@@ -8,11 +8,12 @@ import random
 import re
 import csv
 import io
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, redirect, url_for, session
 from apscheduler.schedulers.background import BackgroundScheduler
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors.rpcerrorlist import FloodWaitError, UserIsBlockedError, PeerFloodError
+from functools import wraps
 
 # --- 기본 설정 ---
 API_ID = os.getenv("API_ID")
@@ -21,8 +22,29 @@ SESSION_STRING = os.getenv("SESSION_STRING")
 DATABASE_URL = os.getenv('DATABASE_URL')
 PHOTO_STORAGE_ID_STR = os.getenv('PHOTO_STORAGE_ID')
 PHOTO_STORAGE_ID = int(PHOTO_STORAGE_ID_STR) if PHOTO_STORAGE_ID_STR else None
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = SECRET_KEY
+
+# --- 로그인 확인 '문지기' 기능 (데코레이터) ---
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def async_login_required(f):
+    @wraps(f)
+    async def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return redirect(url_for('login'))
+        return await f(*args, **kwargs)
+    return decorated_function
 
 # --- (get_db_connection, query_db, execute_db, process_spintax, init_db 등은 이전과 동일) ---
 def get_db_connection():
@@ -142,19 +164,35 @@ async def scheduled_send():
 # --- 스케줄러 설정 ---
 scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
 
-# --- 관리자 페이지 및 API 라우트 ---
-@app.route('/', methods=['GET', 'POST'])
-def admin_page(): # async 제거 (사진 업로드 로직 변경)
-    page_message = None
+# --- 로그인 / 로그아웃 라우트 ---
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
     if request.method == 'POST':
-        message, preview_id = request.form.get('message'), request.form.get('preview_id')
-        interval_min = int(request.form.get('interval_min', 30))
-        interval_max = int(request.form.get('interval_max', 40))
-        photo_msg_id = request.form.get('photo')
-        
-        execute_db("UPDATE config SET message=?, photo=?, interval_min=?, interval_max=?, preview_id=? WHERE id = 1", (message, photo_msg_id, interval_min, interval_max, preview_id))
+        if request.form.get('username') == ADMIN_USERNAME and request.form.get('password') == ADMIN_PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('admin_page'))
+        else:
+            error = '아이디 또는 비밀번호가 올바르지 않습니다.'
+    return render_template('login.html', error=error)
 
-        page_message = "✅ 설정이 성공적으로 저장되었습니다."
+@app.route('/logout')
+@login_required
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
+
+# --- 관리자 페이지 및 API 라우트 ---
+@app.route('/')
+@async_login_required
+async def admin_page():
+    page_message = request.args.get('message') # Redirect 시 메시지 받기
+    
+    # POST 요청은 별도 라우트로 분리
+    if request.method == 'POST':
+        # 이 부분은 이제 /save_config로 이동됨
+        pass
 
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime("%Y-%m-%d")
     sent_today_query = "SELECT COUNT(*) as count FROM activity_log WHERE details LIKE '✅%%' AND DATE(timestamp, '+9 hours') = ?" if not DATABASE_URL else "SELECT COUNT(*) as count FROM activity_log WHERE details LIKE '✅%%' AND (timestamp AT TIME ZONE 'utc' AT TIME ZONE 'Asia/Seoul')::date = CURRENT_DATE"
@@ -166,7 +204,28 @@ def admin_page(): # async 제거 (사진 업로드 로직 변경)
     dashboard_data = {'sent_today': sent_today, 'recent_logs': recent_logs, 'room_count': len(promo_rooms)}
     return render_template('admin.html', config=config, message=page_message, dashboard=dashboard_data, promo_rooms=promo_rooms, scheduler_state=scheduler.state)
 
+@app.route('/save_config', methods=['POST'])
+@login_required
+def save_config():
+    message, preview_id = request.form.get('message'), request.form.get('preview_id')
+    interval_min = int(request.form.get('interval_min', 30))
+    interval_max = int(request.form.get('interval_max', 40))
+    photo_msg_id = request.form.get('photo')
+    
+    current_config = query_db("SELECT * FROM config WHERE id = 1", one=True)
+    
+    execute_db("UPDATE config SET message=?, photo=?, interval_min=?, interval_max=?, preview_id=? WHERE id = 1", (message, photo_msg_id, interval_min, interval_max, preview_id))
+
+    if interval_min != current_config['interval_min'] or interval_max != current_config['interval_max']:
+        next_run_minutes = random.randint(interval_min, interval_max)
+        scheduler.reschedule_job('promo_job', trigger='interval', minutes=next_run_minutes)
+        print(f"스케줄러 간격 변경. 다음 실행은 약 {next_run_minutes}분 후.")
+    
+    return redirect(url_for('admin_page', message="✅ 설정이 성공적으로 저장되었습니다."))
+
+
 @app.route('/preview', methods=['POST'])
+@async_login_required
 async def preview_message():
     try:
         preview_id, message_template = request.form.get('preview_id'), request.form.get('message')
@@ -184,6 +243,7 @@ async def preview_message():
         return jsonify({'message': f'❌ 미리보기 전송 실패: {e}'}), 500
 
 @app.route('/add_room', methods=['POST'])
+@login_required
 def add_room():
     chat_id, room_name, room_group = request.form.get('chat_id'), request.form.get('room_name'), request.form.get('room_group')
     if not chat_id: return "Chat ID는 필수입니다.", 400
@@ -194,6 +254,7 @@ def add_room():
     return "성공적으로 추가되었습니다."
 
 @app.route('/delete_selected_rooms', methods=['POST'])
+@login_required
 def delete_selected_rooms():
     selected_ids = request.form.getlist('selected_ids')
     if not selected_ids:
@@ -203,11 +264,13 @@ def delete_selected_rooms():
     return "선택된 방이 삭제되었습니다."
 
 @app.route('/delete_all_rooms', methods=['POST'])
+@login_required
 def delete_all_rooms():
     execute_db("DELETE FROM promo_rooms")
     return "모든 방이 삭제되었습니다."
 
 @app.route('/import_rooms', methods=['POST'])
+@login_required
 def import_rooms():
     file = request.files.get('file')
     if not file: return "파일이 없습니다.", 400
@@ -223,6 +286,7 @@ def import_rooms():
     return "가져오기 완료!"
 
 @app.route('/export_rooms')
+@login_required
 def export_rooms():
     rows = query_db("SELECT chat_id, room_name, room_group FROM promo_rooms")
     output = io.StringIO()
@@ -234,6 +298,7 @@ def export_rooms():
     return Response(encoded_output, mimetype="text/csv", headers={"Content-Disposition":"attachment;filename=rooms.csv"})
 
 @app.route('/toggle_scheduler/<string:action>', methods=['POST'])
+@login_required
 def toggle_scheduler(action):
     status_to_set = 'paused' if action == 'pause' else 'running'
     try:
@@ -247,6 +312,7 @@ def toggle_scheduler(action):
         return f"오류 발생: {e}", 500
 
 @app.route('/check_rooms', methods=['POST'])
+@async_login_required
 async def check_rooms():
     rooms = query_db("SELECT id, chat_id FROM promo_rooms")
     client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
@@ -266,6 +332,7 @@ async def check_rooms():
     return "상태 확인 완료!"
 
 @app.route('/dialogs')
+@async_login_required
 async def dialogs_page():
     client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
     dialog_list = []
@@ -286,6 +353,7 @@ async def dialogs_page():
     return render_template('dialogs.html', dialogs=dialog_list)
 
 @app.route('/register_all', methods=['POST'])
+@async_login_required
 async def register_all():
     client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
     try:
@@ -306,6 +374,7 @@ async def register_all():
     return "<script>alert('미등록된 그룹/채널을 모두 등록했습니다!'); window.location.href='/dialogs';</script>"
 
 @app.route('/register_selected', methods=['POST'])
+@login_required
 def register_selected():
     selected_rooms = request.form.getlist('selected_rooms')
     count = 0
