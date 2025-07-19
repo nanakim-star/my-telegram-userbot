@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>모든 대화방 관리</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 2em; background-color: #f4f4f9; color: #333; }
+        .container { max-width: 960px; margin: auto; padding: 2em; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1, h2, h3 { border-bottom: 2px solid #eee; padding-bottom: 10px; color: #1a1a1a; }
+        button, .button-link { padding: 10px 15px; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; font-weight: 500; text-decoration: none; color: white; display: inline-block; margin-right: 10px; margin-bottom: 10px; }
+        .btn-success { background-color: #28a745; }
+        .btn-secondary { background-color: #6c757d; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1.5em; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #f8f9fa; }
+        .status-registered { color: green; font-weight: bold; }
+        .status-unregistered { color: gray; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="button-link btn-secondary">← 뒤로가기</a>
+        <h1>🗂️ 내 모든 대화방 관리</h1>
+        <p>Userbot 계정이 참여하고 있는 모든 그룹, 채널, 1:1 대화 목록입니다.</p>
+        
+        <form action="/register_all" method="post">
+            <button type="submit" class="btn-success">미등록된 모든 그룹/채널을 홍보방 목록에 추가하기</button>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>이름</th>
+                    <th>ID</th>
+                    <th>타입</th>
+                    <th>등록 상태</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dialog in dialogs %}
+                <tr>
+                    <td>{{ dialog.name }}</td>
+                    <td><code>{{ dialog.id }}</code></td>
+                    <td>{{ dialog.type }}</td>
+                    <td>
+                        {% if dialog.is_registered %}
+                            <span class="status-registered">등록됨</span>
+                        {% else %}
+                            <span class="status-unregistered">미등록</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" style="text-align: center;">대화방을 불러올 수 없습니다.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
