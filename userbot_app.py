@@ -68,14 +68,44 @@ def process_spintax(text):
 
 # --- 데이터베이스 초기화 ---
 def init_db():
-    # ... (CREATE TABLE 부분 생략) ...
-    cursor.execute("SELECT * FROM config WHERE id = 1")
-    if not cursor.fetchone():
-        # PostgreSQL은 %s, SQLite는 ?를 사용하므로, is_postgres 변수를 활용합니다.
-        is_postgres = bool(DATABASE_URL)
-        placeholder_sql = "INSERT INTO config (id, message, photo, interval_min, interval_max, scheduler_status, preview_id) VALUES (%s, %s, %s, %s, %s, %s, %s)" if is_postgres else "INSERT INTO config (id, message, photo, interval_min, interval_max, scheduler_status, preview_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
-        cursor.execute(placeholder_sql, (1, '', '', 30, 40, 'running', ''))
-    conn.commit()
+    # Render에서는 PostgreSQL 문법, 로컬에서는 SQLite 문법 사용
+    is_postgres = bool(DATABASE_URL)
+    
+    # 테이블 생성 SQL
+    config_table_sql = '''
+        CREATE TABLE IF NOT EXISTS config (
+            id INTEGER PRIMARY KEY, message TEXT, photo TEXT, 
+            interval_min INTEGER, interval_max INTEGER, scheduler_status TEXT,
+            preview_id TEXT
+        )'''
+    promo_rooms_table_sql = f'''
+        CREATE TABLE IF NOT EXISTS promo_rooms (
+            id {'SERIAL' if is_postgres else 'INTEGER'} PRIMARY KEY {'AUTOINCREMENT' if not is_postgres else ''},
+            chat_id TEXT NOT NULL UNIQUE,
+            room_name TEXT,
+            room_group TEXT DEFAULT '기본',
+            is_active INTEGER DEFAULT 1,
+            last_status TEXT DEFAULT '확인 안됨'
+        )'''
+    activity_log_table_sql = f'''
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id {'SERIAL' if is_postgres else 'INTEGER'} PRIMARY KEY {'AUTOINCREMENT' if not is_postgres else ''},
+            timestamp {'TIMESTAMPTZ' if is_postgres else 'DATETIME'} DEFAULT CURRENT_TIMESTAMP,
+            details TEXT
+        )'''
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor() # <--- 이 줄이 올바른 위치에 있어야 합니다.
+        cursor.execute(config_table_sql)
+        cursor.execute(promo_rooms_table_sql)
+        cursor.execute(activity_log_table_sql)
+        
+        cursor.execute("SELECT * FROM config WHERE id = 1")
+        if not cursor.fetchone():
+            # PostgreSQL은 %s, SQLite는 ?를 사용
+            placeholder_sql = "INSERT INTO config (id, message, photo, interval_min, interval_max, scheduler_status, preview_id) VALUES (%s, %s, %s, %s, %s, %s, %s)" if is_postgres else "INSERT INTO config (id, message, photo, interval_min, interval_max, scheduler_status, preview_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            cursor.execute(placeholder_sql, (1, '', '', 30, 40, 'running', ''))
+        conn.commit()
 
 # --- Telethon(Userbot) 핵심 로직 ---
 async def send_userbot_message(client, chat_id, message_template, photo_filename):
