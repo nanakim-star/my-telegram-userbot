@@ -24,7 +24,7 @@ PHOTO_STORAGE_ID = int(PHOTO_STORAGE_ID_STR) if PHOTO_STORAGE_ID_STR else None
 
 app = Flask(__name__)
 
-# --- (get_db_connection, query_db, execute_db, process_spintax, init_db 등은 이전과 동일) ---
+# --- 데이터베이스 연결 함수 ---
 def get_db_connection():
     if DATABASE_URL:
         url = urlparse(DATABASE_URL)
@@ -32,6 +32,7 @@ def get_db_connection():
     else:
         return sqlite3.connect('bot_config.db')
 
+# --- DB 헬퍼 함수 ---
 def query_db(query, args=(), one=False):
     with get_db_connection() as conn:
         is_postgres = hasattr(conn, 'tpc_begin')
@@ -52,6 +53,7 @@ def execute_db(query, args=()):
         cursor.execute(query, args)
         conn.commit()
 
+# --- 스핀택스 처리 함수 ---
 def process_spintax(text):
     if not text: return ""
     pattern = re.compile(r'{([^{}]*)}')
@@ -63,6 +65,7 @@ def process_spintax(text):
         text = text[:match.start()] + choice + text[match.end():]
     return text
 
+# --- 데이터베이스 초기화 ---
 def init_db():
     is_postgres = bool(DATABASE_URL)
     config_table_sql = '''CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, message TEXT, photo TEXT, interval_min INTEGER, interval_max INTEGER, scheduler_status TEXT, preview_id TEXT)'''
@@ -92,7 +95,8 @@ async def send_userbot_message(client, chat_id, message_template, photo_message_
         try:
             photo_message = await client.get_messages(PHOTO_STORAGE_ID, ids=int(photo_message_id))
             if photo_message and photo_message.media:
-                await client.send_file(target_entity, file=photo_message.media, caption=final_message)
+                downloaded_photo_bytes = await client.download_media(photo_message, file=bytes)
+                await client.send_file(target_entity, file=downloaded_photo_bytes, caption=final_message, force_document=False)
             else:
                 await client.send_message(target_entity, final_message)
         except Exception as e:
@@ -162,10 +166,8 @@ async def admin_page():
                 client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
                 try:
                     await client.connect()
-                    # <<--- 여기가 수정된 부분 1 --- S
-                    # force_document=False 옵션을 추가하여 이미지로 전송하도록 강제
-                    uploaded_message = await client.send_file(PHOTO_STORAGE_ID, file=photo_file, caption=photo_file.filename, force_document=False)
-                    # <<--- 여기가 수정된 부분 1 --- E
+                    photo_data = photo_file.read()
+                    uploaded_message = await client.send_file(PHOTO_STORAGE_ID, file=photo_data, caption=photo_file.filename, force_document=False)
                     photo_msg_id = uploaded_message.id
                 except Exception as e:
                     page_message = f"사진 업로드 실패: {e}"
@@ -199,10 +201,8 @@ async def preview_message():
             final_message = process_spintax(message_template)
             if photo_file and photo_file.filename:
                 photo_file.seek(0)
-                # <<--- 여기가 수정된 부분 2 --- S
-                # force_document=False 옵션을 추가하여 이미지로 전송하도록 강제
-                await client.send_file(preview_id, file=photo_file, caption=final_message, force_document=False)
-                # <<--- 여기가 수정된 부분 2 --- E
+                photo_data = photo_file.read()
+                await client.send_file(preview_id, file=photo_data, caption=final_message, force_document=False)
             else:
                 config = query_db("SELECT photo FROM config WHERE id = 1", one=True)
                 photo_msg_id = config.get('photo')
@@ -213,7 +213,6 @@ async def preview_message():
     except Exception as e:
         return jsonify({'message': f'❌ 미리보기 전송 실패: {e}'}), 500
 
-# (이하 /add_room, /delete_room 등 모든 다른 API 라우트는 이전과 동일)
 @app.route('/add_room', methods=['POST'])
 def add_room():
     chat_id, room_name, room_group = request.form.get('chat_id'), request.form.get('room_name'), request.form.get('room_group')
