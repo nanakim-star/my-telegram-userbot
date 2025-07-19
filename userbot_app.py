@@ -23,7 +23,6 @@ PHOTO_STORAGE_ID_STR = os.getenv('PHOTO_STORAGE_ID')
 PHOTO_STORAGE_ID = int(PHOTO_STORAGE_ID_STR) if PHOTO_STORAGE_ID_STR else None
 
 app = Flask(__name__)
-# UPLOAD_FOLDER 설정은 더 이상 사용되지 않습니다.
 
 # --- 데이터베이스 연결 함수 ---
 def get_db_connection():
@@ -84,7 +83,7 @@ def init_db():
             cursor.execute(insert_sql, (1, '', '', 30, 40, 'running', ''))
         conn.commit()
 
-# --- Telethon(Userbot) 핵심 로직 ---
+# --- Telethon(Userbot) 핵심 로직 (수정된 부분) ---
 async def send_userbot_message(client, chat_id, message_template, photo_message_id):
     final_message = process_spintax(message_template)
     try:
@@ -95,8 +94,11 @@ async def send_userbot_message(client, chat_id, message_template, photo_message_
     if photo_message_id and PHOTO_STORAGE_ID:
         try:
             photo_message = await client.get_messages(PHOTO_STORAGE_ID, ids=int(photo_message_id))
-            if photo_message and photo_message.photo:
-                await client.send_file(target_entity, file=photo_message.photo, caption=final_message)
+            if photo_message and photo_message.media:
+                # 1. 사진을 메모리로 다운로드합니다.
+                downloaded_photo_bytes = await client.download_media(photo_message, file=bytes)
+                # 2. 다운로드한 사진 데이터를 새로운 파일로 전송합니다.
+                await client.send_file(target_entity, file=downloaded_photo_bytes, caption=final_message)
             else:
                 await client.send_message(target_entity, final_message)
         except Exception as e:
@@ -104,6 +106,8 @@ async def send_userbot_message(client, chat_id, message_template, photo_message_
             await client.send_message(target_entity, final_message)
     else:
         await client.send_message(target_entity, final_message)
+
+# --- (이하 나머지 코드는 이전과 동일) ---
 
 async def scheduled_send():
     config = query_db("SELECT * FROM config WHERE id = 1", one=True)
@@ -143,10 +147,8 @@ async def scheduled_send():
         execute_db("INSERT INTO activity_log (details) VALUES (?)", (log_detail,))
         print(log_detail)
 
-# --- 스케줄러 설정 ---
 scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
 
-# --- 관리자 페이지 및 API 라우트 ---
 @app.route('/', methods=['GET', 'POST'])
 async def admin_page():
     page_message = None
@@ -200,7 +202,8 @@ async def preview_message():
             final_message = process_spintax(message_template)
             if photo_file and photo_file.filename:
                 photo_file.seek(0)
-                await client.send_file(preview_id, file=photo_file, caption=final_message)
+                # 미리보기는 파일 데이터를 직접 전송
+                await client.send_file(preview_id, file=photo_file.read(), caption=final_message, force_document=False)
             else:
                 config = query_db("SELECT photo FROM config WHERE id = 1", one=True)
                 photo_msg_id = config.get('photo')
