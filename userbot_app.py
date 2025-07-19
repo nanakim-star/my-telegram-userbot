@@ -24,7 +24,7 @@ PHOTO_STORAGE_ID = int(PHOTO_STORAGE_ID_STR) if PHOTO_STORAGE_ID_STR else None
 
 app = Flask(__name__)
 
-# --- 데이터베이스 연결 함수 ---
+# --- (get_db_connection, query_db, execute_db, process_spintax, init_db 등은 이전과 동일) ---
 def get_db_connection():
     if DATABASE_URL:
         url = urlparse(DATABASE_URL)
@@ -32,7 +32,6 @@ def get_db_connection():
     else:
         return sqlite3.connect('bot_config.db')
 
-# --- DB 헬퍼 함수 ---
 def query_db(query, args=(), one=False):
     with get_db_connection() as conn:
         is_postgres = hasattr(conn, 'tpc_begin')
@@ -53,7 +52,6 @@ def execute_db(query, args=()):
         cursor.execute(query, args)
         conn.commit()
 
-# --- 스핀택스 처리 함수 ---
 def process_spintax(text):
     if not text: return ""
     pattern = re.compile(r'{([^{}]*)}')
@@ -65,7 +63,6 @@ def process_spintax(text):
         text = text[:match.start()] + choice + text[match.end():]
     return text
 
-# --- 데이터베이스 초기화 ---
 def init_db():
     is_postgres = bool(DATABASE_URL)
     config_table_sql = '''CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, message TEXT, photo TEXT, interval_min INTEGER, interval_max INTEGER, scheduler_status TEXT, preview_id TEXT)'''
@@ -95,8 +92,7 @@ async def send_userbot_message(client, chat_id, message_template, photo_message_
         try:
             photo_message = await client.get_messages(PHOTO_STORAGE_ID, ids=int(photo_message_id))
             if photo_message and photo_message.media:
-                downloaded_photo_bytes = await client.download_media(photo_message, file=bytes)
-                await client.send_file(target_entity, file=downloaded_photo_bytes, caption=final_message, force_document=False)
+                await client.send_file(target_entity, file=photo_message.media, caption=final_message)
             else:
                 await client.send_message(target_entity, final_message)
         except Exception as e:
@@ -126,10 +122,6 @@ async def scheduled_send():
             try:
                 await send_userbot_message(client, room['chat_id'], config['message'], photo_msg_id)
                 await asyncio.sleep(random.randint(5, 15))
-            except (FloodWaitError, PeerFloodError) as e:
-                log_detail = f"❌ [Userbot] 스팸 제한 오류, {e.seconds}초 대기합니다."
-                await asyncio.sleep(e.seconds + 60)
-                break
             except Exception as e:
                 log_detail += f"❌ {room['chat_id']} 발송 실패: {e}\n"
         
@@ -148,35 +140,24 @@ scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
 
 # --- 관리자 페이지 및 API 라우트 ---
 @app.route('/', methods=['GET', 'POST'])
-async def admin_page():
+def admin_page(): # async 제거
     page_message = None
     if request.method == 'POST':
-        message, preview_id = request.form.get('message'), request.form.get('preview_id')
+        message = request.form.get('message')
+        preview_id = request.form.get('preview_id')
         interval_min = int(request.form.get('interval_min', 30))
         interval_max = int(request.form.get('interval_max', 40))
-        photo_file = request.files.get('photo')
+        photo_msg_id = request.form.get('photo') # 파일이 아닌 텍스트로 받음
         
         current_config = query_db("SELECT * FROM config WHERE id = 1", one=True)
-        photo_msg_id = current_config['photo']
-
-        if photo_file and photo_file.filename:
-            if not PHOTO_STORAGE_ID:
-                page_message = "❌ 사진 저장용 채널 ID가 환경 변수에 설정되지 않았습니다."
-            else:
-                client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
-                try:
-                    await client.connect()
-                    photo_data = photo_file.read()
-                    uploaded_message = await client.send_file(PHOTO_STORAGE_ID, file=photo_data, caption=photo_file.filename, force_document=False)
-                    photo_msg_id = uploaded_message.id
-                except Exception as e:
-                    page_message = f"사진 업로드 실패: {e}"
-                finally:
-                    if client.is_connected(): await client.disconnect()
         
-        execute_db("UPDATE config SET message=?, photo=?, interval_min=?, interval_max=?, preview_id=? WHERE id = 1", (message, str(photo_msg_id), interval_min, interval_max, preview_id))
+        execute_db("UPDATE config SET message=?, photo=?, interval_min=?, interval_max=?, preview_id=? WHERE id = 1", (message, photo_msg_id, interval_min, interval_max, preview_id))
 
-        if not page_message: page_message = "✅ 설정이 성공적으로 저장되었습니다."
+        if interval_min != current_config['interval_min'] or interval_max != current_config['interval_max']:
+            next_run_minutes = random.randint(interval_min, interval_max)
+            scheduler.reschedule_job('promo_job', trigger='interval', minutes=next_run_minutes)
+            print(f"스케줄러 간격 변경. 다음 실행은 약 {next_run_minutes}분 후.")
+        page_message = "✅ 설정이 성공적으로 저장되었습니다."
 
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime("%Y-%m-%d")
     sent_today_query = "SELECT COUNT(*) as count FROM activity_log WHERE details LIKE '✅%%' AND DATE(timestamp, '+9 hours') = ?" if not DATABASE_URL else "SELECT COUNT(*) as count FROM activity_log WHERE details LIKE '✅%%' AND (timestamp AT TIME ZONE 'utc' AT TIME ZONE 'Asia/Seoul')::date = CURRENT_DATE"
@@ -191,28 +172,22 @@ async def admin_page():
 @app.route('/preview', methods=['POST'])
 async def preview_message():
     try:
-        preview_id, message_template = request.form.get('preview_id'), request.form.get('message')
-        photo_file = request.files.get('photo')
+        preview_id = request.form.get('preview_id')
+        message_template = request.form.get('message')
+        photo_msg_id = request.form.get('photo') # 폼에서 직접 메시지 ID를 받음
         if not preview_id or not message_template: return jsonify({'message': 'ID와 메시지를 입력해주세요.'}), 400
 
         client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
         await client.connect()
         try:
-            final_message = process_spintax(message_template)
-            if photo_file and photo_file.filename:
-                photo_file.seek(0)
-                photo_data = photo_file.read()
-                await client.send_file(preview_id, file=photo_data, caption=final_message, force_document=False)
-            else:
-                config = query_db("SELECT photo FROM config WHERE id = 1", one=True)
-                photo_msg_id = config.get('photo')
-                await send_userbot_message(client, preview_id, final_message, photo_msg_id)
+            await send_userbot_message(client, preview_id, message_template, photo_msg_id)
             return jsonify({'message': f'✅ {preview_id}로 미리보기 발송 성공.'})
         finally:
             if client.is_connected(): await client.disconnect()
     except Exception as e:
         return jsonify({'message': f'❌ 미리보기 전송 실패: {e}'}), 500
 
+# (이하 /add_room, /delete_room 등 모든 다른 API 라우트는 이전과 동일)
 @app.route('/add_room', methods=['POST'])
 def add_room():
     chat_id, room_name, room_group = request.form.get('chat_id'), request.form.get('room_name'), request.form.get('room_group')
@@ -336,7 +311,6 @@ def register_selected():
         except Exception as e:
             print(f"선택 등록 중 오류: {e}")
     return f"<script>alert('{count}개의 방을 선택하여 등록했습니다!'); window.location.href='/dialogs';</script>"
-
 
 # --- 애플리케이션 실행 ---
 init_db()
