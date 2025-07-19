@@ -120,15 +120,12 @@
         function sendPreview(button) { const form = document.getElementById('config-form'); const formData = new FormData(form); showLoading(button); fetch('/preview', { method: 'POST', body: formData }).then(response => response.json()).then(data => alert(data.message)).catch(error => alert('미리보기 전송 중 오류 발생: ' + error)).finally(() => hideLoading(button)); }
         document.getElementById('add-room-form').addEventListener('submit', function(e) { e.preventDefault(); const button = this.querySelector('button'); showLoading(button); fetch('/add_room', { method: 'POST', body: new FormData(this) }).then(response => { if (!response.ok) { return response.text().then(text => { throw new Error(text) }); } return response.text(); }).then(message => { alert(message); window.location.reload(); }).catch(error => { alert('추가 실패: ' + error.message); hideLoading(button); }); });
         document.getElementById('import-form').addEventListener('submit', function(e) { e.preventDefault(); const button = this.querySelector('button'); showLoading(button); const formData = new FormData(this); fetch('/import_rooms', { method: 'POST', body: formData }).then(response => response.text()).then(message => { alert(message); window.location.reload(); }).catch(error => { alert('가져오기 중 오류가 발생했습니다: ' + error); hideLoading(button); }); });
-        
-        // --- 여기가 수정/추가된 부분 ---
         function toggleAllRooms(source) {
             checkboxes = document.getElementsByName('selected_ids');
             for(var i=0, n=checkboxes.length; i<n; i++) {
                 checkboxes[i].checked = source.checked;
             }
         }
-        
         function deleteRoom(roomId) {
             if (confirm('정말로 이 방을 삭제하시겠습니까?')) {
                 const button = event.target;
@@ -138,24 +135,25 @@
                 fetch(`/delete_selected_rooms`, { method: 'POST', body: formData }).finally(() => window.location.reload());
             }
         }
-
         function deleteSelected() {
-            if (confirm('선택된 모든 방을 삭제하시겠습니까?')) {
-                const form = document.getElementById('delete-rooms-form');
-                const formData = new FormData(form);
+            const form = document.getElementById('delete-rooms-form');
+            const formData = new FormData(form);
+            const selectedCount = formData.getAll('selected_ids').length;
+            if (selectedCount === 0) {
+                alert('삭제할 항목을 먼저 선택하세요.');
+                return;
+            }
+            if (confirm(`선택된 ${selectedCount}개의 방을 삭제하시겠습니까?`)) {
                 fetch('/delete_selected_rooms', { method: 'POST', body: formData })
                     .finally(() => window.location.reload());
             }
         }
-
         function deleteAll() {
             if (confirm('정말로 전체 목록을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
                 fetch('/delete_all_rooms', { method: 'POST' })
                     .finally(() => window.location.reload());
             }
         }
-        // -----------------------
-
         function checkRooms(button) { showLoading(button, '상태 확인 중...'); fetch('/check_rooms', { method: 'POST' }).then(response => response.text()).then(message => { alert(message); window.location.reload(); }).catch(error => alert('상태 확인 중 오류 발생: ' + error)).finally(() => hideLoading(button)); }
     </script>
 </body>
