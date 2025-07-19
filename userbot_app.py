@@ -8,7 +8,7 @@ import random
 import re
 import csv
 import io
-from flask import Flask, render_template, request, jsonify, Response, redirect, url_for
+from flask import Flask, render_template, request, jsonify, Response
 from apscheduler.schedulers.background import BackgroundScheduler
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
@@ -23,13 +23,13 @@ PHOTO_STORAGE_ID_STR = os.getenv('PHOTO_STORAGE_ID')
 PHOTO_STORAGE_ID = int(PHOTO_STORAGE_ID_STR) if PHOTO_STORAGE_ID_STR else None
 
 app = Flask(__name__)
-# UPLOAD_FOLDER 설정은 더 이상 필요 없습니다.
+# UPLOAD_FOLDER 설정은 더 이상 사용되지 않습니다.
 
 # --- 데이터베이스 연결 함수 ---
 def get_db_connection():
     if DATABASE_URL:
         url = urlparse(DATABASE_URL)
-        return psycopg2.connect(dbname=url.path.split('?', 1)[0][1:], user=url.username, password=url.password, host=url.hostname, port=url.port)
+        return psycopg2.connect(dbname=url.path[1:], user=url.username, password=url.password, host=url.hostname, port=url.port)
     else:
         return sqlite3.connect('bot_config.db')
 
@@ -43,8 +43,8 @@ def query_db(query, args=(), one=False):
         if query.lower().strip().startswith(('insert', 'update', 'delete')):
             conn.commit()
             return
-        rv = [dict((cursor.description[_idx][0], value) for _idx, value in enumerate(row)) for row in cursor.fetchall()]
-        return (rv[-1] if rv else None) if one else rv
+        rv = [dict((cursor.description[idx][0], value) for idx, value in enumerate(row)) for row in cursor.fetchall()]
+        return (rv[0] if rv else None) if one else rv
 
 def execute_db(query, args=()):
     with get_db_connection() as conn:
@@ -56,13 +56,14 @@ def execute_db(query, args=()):
 
 # --- 스핀택스 처리 함수 ---
 def process_spintax(text):
+    if not text: return ""
     pattern = re.compile(r'{([^{}]*)}')
     while True:
         match = pattern.search(text)
         if not match: break
         options = match.group(1).split('|')
         choice = random.choice(options)
-        text = text[:match.start()] + choice + text[_match.end():]
+        text = text[:match.start()] + choice + text[match.end():]
     return text
 
 # --- 데이터베이스 초기화 ---
@@ -90,13 +91,12 @@ async def send_userbot_message(client, chat_id, message_template, photo_message_
         target_entity = int(chat_id)
     except ValueError:
         target_entity = chat_id
-
+    
     if photo_message_id and PHOTO_STORAGE_ID:
         try:
             photo_message = await client.get_messages(PHOTO_STORAGE_ID, ids=int(photo_message_id))
-            if photo_message and photo_message.media:
-                # 파일 경로 대신 media 객체를 직접 전달
-                await client.send_file(target_entity, file=photo_message.media, caption=final_message)
+            if photo_message and photo_message.photo:
+                await client.send_file(target_entity, file=photo_message.photo, caption=final_message)
             else:
                 await client.send_message(target_entity, final_message)
         except Exception as e:
@@ -114,11 +114,11 @@ async def scheduled_send():
     active_rooms = query_db("SELECT chat_id FROM promo_rooms WHERE is_active = 1")
     log_detail = ""
     client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
-
+    
     try:
         if not config.get('message') or not active_rooms:
             raise ValueError("홍보 메시지 또는 대상 방이 설정되지 않았습니다.")
-
+        
         await client.connect()
         photo_msg_id = config.get('photo')
 
@@ -132,7 +132,7 @@ async def scheduled_send():
                 break
             except Exception as e:
                 log_detail += f"❌ {room['chat_id']} 발송 실패: {e}\n"
-
+        
         if not log_detail:
             log_detail = f"✅ [Userbot] {len(active_rooms)}개 활성 방에 메시지 발송 완료"
     except Exception as e:
@@ -155,13 +155,13 @@ async def admin_page():
         interval_min = int(request.form.get('interval_min', 30))
         interval_max = int(request.form.get('interval_max', 40))
         photo_file = request.files.get('photo')
-
+        
         current_config = query_db("SELECT * FROM config WHERE id = 1", one=True)
         photo_msg_id = current_config['photo']
 
         if photo_file and photo_file.filename:
             if not PHOTO_STORAGE_ID:
-                page_message = "❌ 사진 저장용 채널 ID가 설정되지 않았습니다."
+                page_message = "❌ 사진 저장용 채널 ID가 환경 변수에 설정되지 않았습니다."
             else:
                 client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
                 try:
@@ -172,8 +172,8 @@ async def admin_page():
                     page_message = f"사진 업로드 실패: {e}"
                 finally:
                     if client.is_connected(): await client.disconnect()
-
-        execute_db("UPDATE config SET message=?, photo=?, interval_min=?, interval_max=?, preview_id=? WHERE id = 1", (message, photo_msg_id, interval_min, interval_max, preview_id))
+        
+        execute_db("UPDATE config SET message=?, photo=?, interval_min=?, interval_max=?, preview_id=? WHERE id = 1", (message, str(photo_msg_id), interval_min, interval_max, preview_id))
 
         if not page_message: page_message = "✅ 설정이 성공적으로 저장되었습니다."
 
@@ -199,6 +199,7 @@ async def preview_message():
         try:
             final_message = process_spintax(message_template)
             if photo_file and photo_file.filename:
+                photo_file.seek(0)
                 await client.send_file(preview_id, file=photo_file, caption=final_message)
             else:
                 config = query_db("SELECT photo FROM config WHERE id = 1", one=True)
@@ -210,7 +211,6 @@ async def preview_message():
     except Exception as e:
         return jsonify({'message': f'❌ 미리보기 전송 실패: {e}'}), 500
 
-# (이하 /add_room, /delete_room 등 모든 다른 API 라우트는 이전과 동일)
 @app.route('/add_room', methods=['POST'])
 def add_room():
     chat_id, room_name, room_group = request.form.get('chat_id'), request.form.get('room_name'), request.form.get('room_group')
@@ -236,7 +236,7 @@ def import_rooms():
     for row in reader:
         if len(row) >= 3:
             try:
-                execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?) ON CONFLICT (chat_id) DO NOTHING", (row[_idx], row[_idx+1], row[_idx+2]))
+                execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?) ON CONFLICT (chat_id) DO NOTHING", (row[0], row[1], row[2]))
             except (psycopg2.IntegrityError, sqlite3.IntegrityError):
                 continue
     return "가져오기 완료!"
@@ -268,7 +268,7 @@ async def check_rooms():
     rooms = query_db("SELECT id, chat_id FROM promo_rooms")
     client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
     await client.connect()
-
+    
     for room in rooms:
         status = ''
         try:
@@ -276,9 +276,9 @@ async def check_rooms():
             status = f"✅ OK ({getattr(entity, 'title', 'N/A')})"
         except Exception as e:
             status = f"❌ Error: {e.__class__.__name__}"
-
+        
         execute_db("UPDATE promo_rooms SET last_status = ? WHERE id = ?", (status, room['id']))
-
+            
     await client.disconnect()
     return "상태 확인 완료!"
 
@@ -335,7 +335,6 @@ def register_selected():
             print(f"선택 등록 중 오류: {e}")
     return f"<script>alert('{count}개의 방을 선택하여 등록했습니다!'); window.location.href='/dialogs';</script>"
 
-
 # --- 애플리케이션 실행 ---
 init_db()
 
@@ -346,7 +345,7 @@ if __name__ == '__main__':
 
     scheduler.add_job(lambda: asyncio.run(scheduled_send()), 'interval', minutes=random.randint(interval_min, interval_max), id='promo_job')
     scheduler.start()
-
+    
     execute_db("UPDATE config SET scheduler_status = ? WHERE id = 1", ('running',))
 
     print("Userbot 데이터베이스와 스케줄러가 준비되었습니다.")
