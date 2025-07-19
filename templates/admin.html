@@ -10,7 +10,7 @@
         hr { border: 0; border-top: 1px solid #eee; margin: 2em 0; }
         form { margin-bottom: 1.5em; }
         label { font-weight: 500; display: block; margin-bottom: 5px; }
-        textarea, input[type="text"], input[type="number"] { width: 98%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 1em; margin-bottom: 1em; }
+        textarea, input[type="text"], input[type="number"], input[type="file"] { width: 98%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 1em; margin-bottom: 1em; }
         textarea { height: 120px; resize: vertical; }
         button, .button-link { padding: 10px 15px; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; font-weight: 500; text-decoration: none; color: white; display: inline-block; margin-right: 10px; margin-bottom: 10px; }
         .btn-primary { background-color: #007bff; }
@@ -51,24 +51,21 @@
         <div class="activity-log"><h3>최근 활동 로그</h3><ul>{% for log in dashboard.recent_logs %}<li>{{ log.timestamp }} - {{ log.details }}</li>{% else %}<li>아직 활동 기록이 없습니다.</li>{% endfor %}</ul></div>
         <hr>
         <h2>⚙️ 기본 설정</h2>
-        <form id="config-form" method="post">
+        <form id="config-form" method="post" enctype="multipart/form-data">
             <h3>1. 홍보 문구</h3>
             <p class="spintax-info">스핀택스 사용 가능: {단어1|단어2} 형식으로 작성하면 발송 시마다 랜덤하게 선택됩니다.</p>
             <textarea name="message" placeholder="홍보할 메시지를 입력하세요.">{{ config.message }}</textarea>
-
-            <h3>2. 홍보용 사진 (메시지 ID)</h3>
+            <h3>2. 홍보용 사진 (선택 사항)</h3>
             <div class="photo-info">
                 1. '사진 저장소' 비공개 채널에 사진을 직접 올리세요.<br>
                 2. 올린 사진을 <code>@userinfobot</code> 같은 ID 확인 봇에 전달(forward)하여 'message_id'를 얻으세요.<br>
                 3. 얻은 숫자 ID를 아래 칸에 붙여넣으세요.
             </div>
             <input type="text" name="photo" placeholder="사진 메시지 ID를 입력하세요." value="{{ config.photo }}">
-            
             <h3>3. 미리보기 테스트</h3>
             <label for="preview_id">테스트 메시지를 받을 텔레그램 @사용자명</label>
             <input type="text" id="preview_id" name="preview_id" placeholder="@username 또는 숫자 ID 입력" value="{{ config.preview_id }}">
             <button type="button" class="btn-secondary" onclick="sendPreview(this)">미리보기 발송</button>
-
             <h3>4. 랜덤 발송 간격 (분)</h3>
             <div style="display: flex; gap: 1em;"><div style="flex: 1;"><label for="interval_min">최소 간격</label><input type="number" id="interval_min" name="interval_min" value="{{ config.interval_min }}"></div><div style="flex: 1;"><label for="interval_max">최대 간격</label><input type="number" id="interval_max" name="interval_max" value="{{ config.interval_max }}"></div></div>
             <button type="submit" class="btn-primary" style="width: 100%; margin-top: 2em;">기본 설정 저장하기</button>
