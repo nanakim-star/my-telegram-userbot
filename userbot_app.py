@@ -19,7 +19,7 @@ from telethon.tl.types import ChannelParticipantAdmin, ChannelParticipantCreator
 # --- 기본 설정 ---
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-SESSION_FILE = 'userbot.session' # generate_session.py로 생성된 세션 파일
+SESSION_STRING = os.getenv("SESSION_STRING") # Render에 등록할 비밀번호 문자열
 DATABASE_URL = os.getenv('DATABASE_URL')
 UPLOAD_FOLDER = os.getenv('RENDER_DISK_PATH', 'static/uploads')
 
@@ -28,7 +28,6 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # --- 데이터베이스 연결 함수 (PostgreSQL & SQLite 호환) ---
 def get_db_connection():
-    # (이전과 동일)
     if DATABASE_URL:
         url = urlparse(DATABASE_URL)
         return psycopg2.connect(dbname=url.path[1:], user=url.username, password=url.password, host=url.hostname, port=url.port)
@@ -58,7 +57,6 @@ def execute_db(query, args=()):
 
 # --- 스핀택스 처리 함수 ---
 def process_spintax(text):
-    # (이전과 동일)
     pattern = re.compile(r'{([^{}]*)}')
     while True:
         match = pattern.search(text)
@@ -70,7 +68,6 @@ def process_spintax(text):
 
 # --- 데이터베이스 초기화 ---
 def init_db():
-    # (이전과 동일)
     is_postgres = bool(DATABASE_URL)
     config_table_sql = '''CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, message TEXT, photo TEXT, interval_min INTEGER, interval_max INTEGER, scheduler_status TEXT, preview_id TEXT)'''
     promo_rooms_table_sql = f'''CREATE TABLE IF NOT EXISTS promo_rooms (id {'SERIAL' if is_postgres else 'INTEGER'} PRIMARY KEY {'AUTOINCREMENT' if not is_postgres else ''}, chat_id TEXT NOT NULL UNIQUE, room_name TEXT, room_group TEXT DEFAULT '기본', is_active INTEGER DEFAULT 1, last_status TEXT DEFAULT '확인 안됨')'''
@@ -102,27 +99,27 @@ async def send_userbot_message(client, chat_id, message_template, photo_filename
 
 async def scheduled_send():
     config = query_db("SELECT * FROM config WHERE id = 1", one=True)
-    if config['scheduler_status'] != 'running':
-        print("스케줄러가 '일시정지' 상태이므로 메시지를 발송하지 않습니다.")
+    if not config or config.get('scheduler_status') != 'running':
+        print("스케줄러가 '일시정지' 상태이거나 설정이 없습니다.")
         return
 
     active_rooms = query_db("SELECT chat_id FROM promo_rooms WHERE is_active = 1")
     log_detail = ""
-    client = TelegramClient(SESSION_FILE, int(API_ID), API_HASH)
+    client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
     
     try:
-        if not config['message'] or not active_rooms:
+        if not config.get('message') or not active_rooms:
             raise ValueError("홍보 메시지 또는 대상 방이 설정되지 않았습니다.")
         
         await client.connect()
         for room in active_rooms:
             try:
                 await send_userbot_message(client, room['chat_id'], config['message'], config['photo'])
-                await asyncio.sleep(random.randint(5, 15)) # 스팸 방지를 위한 약간의 딜레이
+                await asyncio.sleep(random.randint(5, 15))
             except (FloodWaitError, PeerFloodError) as e:
-                log_detail = f"❌ [Userbot] 스팸 제한 오류 발생, 잠시 대기합니다: {e}"
-                await asyncio.sleep(e.seconds + 60) # 텔레그램이 요청한 시간만큼 대기
-                break # 이번 턴은 중단
+                log_detail = f"❌ [Userbot] 스팸 제한 오류, {e.seconds}초 대기합니다."
+                await asyncio.sleep(e.seconds + 60)
+                break
             except UserIsBlockedError:
                 log_detail += f"⚠️ {room['chat_id']} 사용자가 봇을 차단했습니다.\n"
             except Exception as e:
@@ -144,7 +141,6 @@ scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
 # --- 관리자 페이지 및 API 라우트 ---
 @app.route('/', methods=['GET', 'POST'])
 def admin_page():
-    # ... (이전 '정식 봇' 최종 완성본의 Flask 로직과 동일)
     page_message = None
     if request.method == 'POST':
         message, preview_id = request.form.get('message'), request.form.get('preview_id')
@@ -179,7 +175,6 @@ def admin_page():
 
 @app.route('/add_room', methods=['POST'])
 def add_room():
-    # (이전과 동일)
     chat_id, room_name, room_group = request.form.get('chat_id'), request.form.get('room_name'), request.form.get('room_group')
     if not chat_id: return "Chat ID는 필수입니다.", 400
     try:
@@ -190,13 +185,11 @@ def add_room():
 
 @app.route('/delete_room/<int:room_id>', methods=['POST'])
 def delete_room(room_id):
-    # (이전과 동일)
     execute_db("DELETE FROM promo_rooms WHERE id = ?", (room_id,))
     return "삭제되었습니다."
 
 @app.route('/import_rooms', methods=['POST'])
 def import_rooms():
-    # (이전과 동일)
     file = request.files.get('file')
     if not file: return "파일이 없습니다.", 400
     stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
@@ -212,22 +205,17 @@ def import_rooms():
 
 @app.route('/export_rooms')
 def export_rooms():
-    # (이전과 동일)
     rows = query_db("SELECT chat_id, room_name, room_group FROM promo_rooms")
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(['Chat ID', 'Room Name', 'Group'])
     for row in rows:
         writer.writerow([row['chat_id'], row['room_name'], row['room_group']])
-
-# 엑셀에서 한글이 깨지지 않도록 utf-8-sig로 인코딩합니다.
     encoded_output = output.getvalue().encode('utf-8-sig')
-
     return Response(encoded_output, mimetype="text/csv", headers={"Content-Disposition":"attachment;filename=rooms.csv"})
 
 @app.route('/toggle_scheduler/<string:action>', methods=['POST'])
 def toggle_scheduler(action):
-    # (이전과 동일)
     status_to_set = 'paused' if action == 'pause' else 'running'
     try:
         if action == 'pause' and scheduler.state == 1: scheduler.pause()
@@ -239,15 +227,14 @@ def toggle_scheduler(action):
 
 @app.route('/check_rooms', methods=['POST'])
 async def check_rooms():
-    # (Userbot 버전으로 수정)
     rooms = query_db("SELECT id, chat_id FROM promo_rooms")
-    client = TelegramClient(SESSION_FILE, int(API_ID), API_HASH)
+    client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
     await client.connect()
     
     for room in rooms:
         status = ''
         try:
-            entity = await client.get_entity(int(room['chat_id'])) 
+            entity = await client.get_entity(int(room['chat_id']))
             status = f"✅ OK ({getattr(entity, 'title', 'N/A')})"
         except Exception as e:
             status = f"❌ Error: {e.__class__.__name__}"
@@ -259,19 +246,25 @@ async def check_rooms():
 
 @app.route('/preview', methods=['POST'])
 async def preview_message():
-    # (Userbot 버전으로 수정)
     try:
         preview_id = request.form.get('preview_id')
         message_template = request.form.get('message')
+        photo = request.files.get('photo')
         if not preview_id or not message_template: return jsonify({'message': 'ID와 메시지를 입력해주세요.'}), 400
 
-        client = TelegramClient(SESSION_FILE, int(API_ID), API_HASH)
+        client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
         await client.connect()
         try:
-            await send_userbot_message(client, preview_id, message_template, None)
+            final_message = process_spintax(message_template)
+            if photo and photo.filename:
+                photo.seek(0)
+                await client.send_file(preview_id, file=photo, caption=final_message)
+            else:
+                await client.send_message(preview_id, final_message)
             return jsonify({'message': f'✅ {preview_id}로 미리보기 발송 성공.'})
         finally:
-            await client.disconnect()
+            if client.is_connected():
+                await client.disconnect()
     except Exception as e:
         return jsonify({'message': f'❌ 미리보기 전송 실패: {e}'}), 500
 
