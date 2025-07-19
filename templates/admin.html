@@ -51,11 +51,10 @@
         <div class="activity-log"><h3>최근 활동 로그</h3><ul>{% for log in dashboard.recent_logs %}<li>{{ log.timestamp }} - {{ log.details }}</li>{% else %}<li>아직 활동 기록이 없습니다.</li>{% endfor %}</ul></div>
         <hr>
         <h2>⚙️ 기본 설정</h2>
-        <form id="config-form" method="post">
+        <form id="config-form" method="post" enctype="multipart/form-data">
             <h3>1. 홍보 문구</h3>
             <p class="spintax-info">스핀택스 사용 가능: {단어1|단어2} 형식으로 작성하면 발송 시마다 랜덤하게 선택됩니다.</p>
             <textarea name="message" placeholder="홍보할 메시지를 입력하세요.">{{ config.message }}</textarea>
-
             <h3>2. 홍보용 사진 (메시지 ID)</h3>
             <div class="photo-info">
                 <strong>ID 얻는 법 (가장 간단한 방법):</strong><br>
@@ -77,13 +76,42 @@
         <h2>🗂️ 홍보방 관리</h2>
         <form id="add-room-form"><h3>신규 방 추가</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1em;"><input type="text" name="chat_id" placeholder="채팅방 ID (필수)" required><input type="text" name="room_name" placeholder="채팅방 이름 (별칭)"><input type="text" name="room_group" placeholder="그룹명" value="기본"></div><button type="submit" class="btn-success">새로운 방 추가</button></form>
         <h3>일괄 관리</h3>
-        <form id="import-form" action="/import_rooms" method="post" enctype="multipart/form-data"><input type="file" name="file" required><button type="submit" class="btn-info">CSV 가져오기</button></form>
+        <form id="import-form" action="/import_rooms" method="post" enctype="multipart/form-data" style="display:inline-block;"><input type="file" name="file" required><button type="submit" class="btn-info">CSV 가져오기</button></form>
         <a href="/export_rooms" class="button-link btn-secondary">CSV 내보내기</a>
         <button class="btn-info" onclick="checkRooms(this)">모든 방 상태 확인</button>
         <h3>등록된 방 목록</h3>
-        <table><thead><tr><th>Chat ID</th><th>이름</th><th>그룹</th><th>마지막 상태</th><th>관리</th></tr></thead>
-        <tbody>{% for room in promo_rooms %}<tr><td>{{ room.chat_id }}</td><td>{{ room.room_name }}</td><td>{{ room.room_group }}</td><td>{{ room.last_status }}</td><td><button class="btn-danger" onclick="deleteRoom({{ room.id }})">삭제</button></td></tr>{% else %}<tr><td colspan="5" style="text-align: center;">등록된 방이 없습니다.</td></tr>{% endfor %}</tbody>
-        </table>
+        <form id="delete-rooms-form">
+            <button type="button" class="btn-danger" onclick="deleteSelected()">선택 목록 삭제</button>
+            <button type="button" class="btn-danger" onclick="deleteAll()">전체 목록 삭제</button>
+            <table>
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" onclick="toggleAllRooms(this)"></th>
+                        <th>Chat ID</th>
+                        <th>이름</th>
+                        <th>그룹</th>
+                        <th>마지막 상태</th>
+                        <th>관리</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for room in promo_rooms %}
+                    <tr>
+                        <td><input type="checkbox" name="selected_ids" value="{{ room.id }}"></td>
+                        <td>{{ room.chat_id }}</td>
+                        <td>{{ room.room_name }}</td>
+                        <td>{{ room.room_group }}</td>
+                        <td>{{ room.last_status }}</td>
+                        <td><button type="button" class="btn-danger" onclick="deleteRoom({{ room.id }})">삭제</button></td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" style="text-align: center;">등록된 방이 없습니다.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </form>
     </div>
     <script>
         function showLoading(button, text = '처리 중...') { button.dataset.originalText = button.textContent; button.textContent = text; button.disabled = true; }
@@ -92,7 +120,42 @@
         function sendPreview(button) { const form = document.getElementById('config-form'); const formData = new FormData(form); showLoading(button); fetch('/preview', { method: 'POST', body: formData }).then(response => response.json()).then(data => alert(data.message)).catch(error => alert('미리보기 전송 중 오류 발생: ' + error)).finally(() => hideLoading(button)); }
         document.getElementById('add-room-form').addEventListener('submit', function(e) { e.preventDefault(); const button = this.querySelector('button'); showLoading(button); fetch('/add_room', { method: 'POST', body: new FormData(this) }).then(response => { if (!response.ok) { return response.text().then(text => { throw new Error(text) }); } return response.text(); }).then(message => { alert(message); window.location.reload(); }).catch(error => { alert('추가 실패: ' + error.message); hideLoading(button); }); });
         document.getElementById('import-form').addEventListener('submit', function(e) { e.preventDefault(); const button = this.querySelector('button'); showLoading(button); const formData = new FormData(this); fetch('/import_rooms', { method: 'POST', body: formData }).then(response => response.text()).then(message => { alert(message); window.location.reload(); }).catch(error => { alert('가져오기 중 오류가 발생했습니다: ' + error); hideLoading(button); }); });
-        function deleteRoom(roomId) { if (confirm('정말로 이 방을 삭제하시겠습니까?')) { const button = event.target; showLoading(button); fetch(`/delete_room/${roomId}`, { method: 'POST' }).finally(() => window.location.reload()); } }
+        
+        // --- 여기가 수정/추가된 부분 ---
+        function toggleAllRooms(source) {
+            checkboxes = document.getElementsByName('selected_ids');
+            for(var i=0, n=checkboxes.length; i<n; i++) {
+                checkboxes[i].checked = source.checked;
+            }
+        }
+        
+        function deleteRoom(roomId) {
+            if (confirm('정말로 이 방을 삭제하시겠습니까?')) {
+                const button = event.target;
+                showLoading(button);
+                const formData = new FormData();
+                formData.append('selected_ids', roomId);
+                fetch(`/delete_selected_rooms`, { method: 'POST', body: formData }).finally(() => window.location.reload());
+            }
+        }
+
+        function deleteSelected() {
+            if (confirm('선택된 모든 방을 삭제하시겠습니까?')) {
+                const form = document.getElementById('delete-rooms-form');
+                const formData = new FormData(form);
+                fetch('/delete_selected_rooms', { method: 'POST', body: formData })
+                    .finally(() => window.location.reload());
+            }
+        }
+
+        function deleteAll() {
+            if (confirm('정말로 전체 목록을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+                fetch('/delete_all_rooms', { method: 'POST' })
+                    .finally(() => window.location.reload());
+            }
+        }
+        // -----------------------
+
         function checkRooms(button) { showLoading(button, '상태 확인 중...'); fetch('/check_rooms', { method: 'POST' }).then(response => response.text()).then(message => { alert(message); window.location.reload(); }).catch(error => alert('상태 확인 중 오류 발생: ' + error)).finally(() => hideLoading(button)); }
     </script>
 </body>
