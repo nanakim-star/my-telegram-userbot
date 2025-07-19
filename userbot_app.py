@@ -8,7 +8,7 @@ import random
 import re
 import csv
 import io
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, redirect, url_for
 from apscheduler.schedulers.background import BackgroundScheduler
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
@@ -19,10 +19,11 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 SESSION_STRING = os.getenv("SESSION_STRING")
 DATABASE_URL = os.getenv('DATABASE_URL')
-UPLOAD_FOLDER = os.getenv('RENDER_DISK_PATH', 'static/uploads')
+PHOTO_STORAGE_ID_STR = os.getenv('PHOTO_STORAGE_ID')
+PHOTO_STORAGE_ID = int(PHOTO_STORAGE_ID_STR) if PHOTO_STORAGE_ID_STR else None
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+# UPLOAD_FOLDER 설정은 더 이상 필요 없습니다.
 
 # --- 데이터베이스 연결 함수 ---
 def get_db_connection():
@@ -83,17 +84,23 @@ def init_db():
         conn.commit()
 
 # --- Telethon(Userbot) 핵심 로직 ---
-async def send_userbot_message(client, chat_id, message_template, photo_filename):
+async def send_userbot_message(client, chat_id, message_template, photo_message_id):
     final_message = process_spintax(message_template)
     try:
         target_entity = int(chat_id)
     except ValueError:
         target_entity = chat_id
     
-    photo_path = os.path.join(app.config['UPLOAD_FOLDER'], photo_filename) if photo_filename else None
-    
-    if photo_path and os.path.exists(photo_path):
-        await client.send_file(target_entity, file=photo_path, caption=final_message)
+    if photo_message_id and PHOTO_STORAGE_ID:
+        try:
+            photo_message = await client.get_messages(PHOTO_STORAGE_ID, ids=int(photo_message_id))
+            if photo_message and photo_message.media:
+                await client.send_file(target_entity, file=photo_message.media, caption=final_message)
+            else:
+                await client.send_message(target_entity, final_message)
+        except Exception as e:
+            print(f"사진 메시지({photo_message_id}) 처리 중 오류: {e}")
+            await client.send_message(target_entity, final_message)
     else:
         await client.send_message(target_entity, final_message)
 
@@ -112,16 +119,16 @@ async def scheduled_send():
             raise ValueError("홍보 메시지 또는 대상 방이 설정되지 않았습니다.")
         
         await client.connect()
+        photo_msg_id = config.get('photo')
+
         for room in active_rooms:
             try:
-                await send_userbot_message(client, room['chat_id'], config['message'], config['photo'])
+                await send_userbot_message(client, room['chat_id'], config['message'], photo_msg_id)
                 await asyncio.sleep(random.randint(5, 15))
             except (FloodWaitError, PeerFloodError) as e:
                 log_detail = f"❌ [Userbot] 스팸 제한 오류, {e.seconds}초 대기합니다."
                 await asyncio.sleep(e.seconds + 60)
                 break
-            except UserIsBlockedError:
-                log_detail += f"⚠️ {room['chat_id']} 사용자가 봇을 차단했습니다.\n"
             except Exception as e:
                 log_detail += f"❌ {room['chat_id']} 발송 실패: {e}\n"
         
@@ -140,28 +147,34 @@ scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
 
 # --- 관리자 페이지 및 API 라우트 ---
 @app.route('/', methods=['GET', 'POST'])
-def admin_page():
+async def admin_page():
     page_message = None
     if request.method == 'POST':
         message, preview_id = request.form.get('message'), request.form.get('preview_id')
         interval_min = int(request.form.get('interval_min', 30))
         interval_max = int(request.form.get('interval_max', 40))
-        photo = request.files.get('photo')
+        photo_file = request.files.get('photo')
         
         current_config = query_db("SELECT * FROM config WHERE id = 1", one=True)
-        photo_filename = current_config['photo']
-        if photo and photo.filename:
-            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-            photo_filename = photo.filename
-            photo.save(os.path.join(app.config['UPLOAD_FOLDER'], photo_filename))
-        
-        execute_db("UPDATE config SET message=?, photo=?, interval_min=?, interval_max=?, preview_id=? WHERE id = 1", (message, photo_filename, interval_min, interval_max, preview_id))
+        photo_msg_id = current_config['photo']
 
-        if interval_min != current_config['interval_min'] or interval_max != current_config['interval_max']:
-            next_run_minutes = random.randint(interval_min, interval_max)
-            scheduler.reschedule_job('promo_job', trigger='interval', minutes=next_run_minutes)
-            print(f"스케줄러 간격 변경. 다음 실행은 약 {next_run_minutes}분 후.")
-        page_message = "✅ 설정이 성공적으로 저장되었습니다."
+        if photo_file and photo_file.filename:
+            if not PHOTO_STORAGE_ID:
+                page_message = "❌ 사진 저장용 채널 ID가 설정되지 않았습니다."
+            else:
+                client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+                try:
+                    await client.connect()
+                    uploaded_message = await client.send_file(PHOTO_STORAGE_ID, file=photo_file, caption=photo_file.filename)
+                    photo_msg_id = uploaded_message.id
+                except Exception as e:
+                    page_message = f"사진 업로드 실패: {e}"
+                finally:
+                    if client.is_connected(): await client.disconnect()
+        
+        execute_db("UPDATE config SET message=?, photo=?, interval_min=?, interval_max=?, preview_id=? WHERE id = 1", (message, photo_msg_id, interval_min, interval_max, preview_id))
+
+        if not page_message: page_message = "✅ 설정이 성공적으로 저장되었습니다."
 
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime("%Y-%m-%d")
     sent_today_query = "SELECT COUNT(*) as count FROM activity_log WHERE details LIKE '✅%%' AND DATE(timestamp, '+9 hours') = ?" if not DATABASE_URL else "SELECT COUNT(*) as count FROM activity_log WHERE details LIKE '✅%%' AND (timestamp AT TIME ZONE 'utc' AT TIME ZONE 'Asia/Seoul')::date = CURRENT_DATE"
@@ -173,12 +186,36 @@ def admin_page():
     dashboard_data = {'sent_today': sent_today, 'recent_logs': recent_logs, 'room_count': len(promo_rooms)}
     return render_template('admin.html', config=config, message=page_message, dashboard=dashboard_data, promo_rooms=promo_rooms, scheduler_state=scheduler.state)
 
+@app.route('/preview', methods=['POST'])
+async def preview_message():
+    try:
+        preview_id, message_template = request.form.get('preview_id'), request.form.get('message')
+        photo_file = request.files.get('photo')
+        if not preview_id or not message_template: return jsonify({'message': 'ID와 메시지를 입력해주세요.'}), 400
+
+        client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+        await client.connect()
+        try:
+            final_message = process_spintax(message_template)
+            if photo_file and photo_file.filename:
+                await client.send_file(preview_id, file=photo_file, caption=final_message)
+            else:
+                config = query_db("SELECT photo FROM config WHERE id = 1", one=True)
+                photo_msg_id = config.get('photo')
+                await send_userbot_message(client, preview_id, final_message, photo_msg_id)
+            return jsonify({'message': f'✅ {preview_id}로 미리보기 발송 성공.'})
+        finally:
+            if client.is_connected(): await client.disconnect()
+    except Exception as e:
+        return jsonify({'message': f'❌ 미리보기 전송 실패: {e}'}), 500
+
+# (이하 /add_room, /delete_room 등 모든 다른 API 라우트는 이전과 동일)
 @app.route('/add_room', methods=['POST'])
 def add_room():
     chat_id, room_name, room_group = request.form.get('chat_id'), request.form.get('room_name'), request.form.get('room_group')
     if not chat_id: return "Chat ID는 필수입니다.", 400
     try:
-        execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?) ON CONFLICT (chat_id) DO NOTHING", (chat_id, room_name, room_group))
+        execute_db("INSERT INTO promo_rooms (chat_id, room_name, room_group) VALUES (?, ?, ?)", (chat_id, room_name, room_group))
     except (psycopg2.IntegrityError, sqlite3.IntegrityError):
         return "이미 존재하는 Chat ID 입니다.", 400
     return "성공적으로 추가되었습니다."
@@ -244,29 +281,6 @@ async def check_rooms():
     await client.disconnect()
     return "상태 확인 완료!"
 
-@app.route('/preview', methods=['POST'])
-async def preview_message():
-    try:
-        preview_id, message_template = request.form.get('preview_id'), request.form.get('message')
-        photo = request.files.get('photo')
-        if not preview_id or not message_template: return jsonify({'message': 'ID와 메시지를 입력해주세요.'}), 400
-
-        client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
-        await client.connect()
-        try:
-            photo_filename = None
-            if photo and photo.filename:
-                os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-                photo_filename = "preview_" + photo.filename
-                photo.save(os.path.join(app.config['UPLOAD_FOLDER'], photo_filename))
-            await send_userbot_message(client, preview_id, message_template, photo_filename)
-            return jsonify({'message': f'✅ {preview_id}로 미리보기 발송 성공.'})
-        finally:
-            if client.is_connected():
-                await client.disconnect()
-    except Exception as e:
-        return jsonify({'message': f'❌ 미리보기 전송 실패: {e}'}), 500
-
 @app.route('/dialogs')
 async def dialogs_page():
     client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
@@ -319,6 +333,7 @@ def register_selected():
         except Exception as e:
             print(f"선택 등록 중 오류: {e}")
     return f"<script>alert('{count}개의 방을 선택하여 등록했습니다!'); window.location.href='/dialogs';</script>"
+
 
 # --- 애플리케이션 실행 ---
 init_db()
